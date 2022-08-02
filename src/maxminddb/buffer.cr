@@ -1,40 +1,66 @@
-struct MaxMindDB::Buffer
+class MaxMindDB::Buffer
   getter size : Int32
-  property position : Int32
 
-  def initialize(@bytes : Bytes)
-    @size = @bytes.size
-    @position = 0
+  @fp : File
+  @is_tempfile : Bool = false
+
+  def position
+    @fp.pos
+  end
+
+  def position=(idx : Int64) : Nil
+    @fp.seek(idx)
+  end
+
+  def initialize(bytes : Bytes)
+    @is_tempfile = true
+    @fp = File.tempfile("maxminddb.buffer")
+    @fp.write(bytes)
+    @fp.seek(0)
+
+    @size = @fp.size.to_i32
+  end
+
+  def finalize
+    @fp.close
+
+    if @is_tempfile
+      @fp.delete
+    end
+  end
+
+  def initialize(path : String)
+    @is_tempfile = false
+    @fp = File.open(path, "rb")
+    @size = @fp.size.to_i32
   end
 
   # Reads *size* bytes from this bytes buffer.
   # Returns empty `Bytes` if and only if there is no
   # more data to read.
   def read(size : Int32) : Bytes
-    new_position = @position + size
+    slice = Bytes.new(size)
 
-    if @size >= new_position 
-      value = @bytes[@position, size]
-      @position = new_position
-    else
-      value = Bytes.new(0)
+    begin
+      @fp.read_fully(slice)
+    rescue IO::EOFError
+      return Bytes.new(0)
     end
-    
-    value
+
+    slice
   end
 
   # Read one byte from bytes buffer
   # Returns 0 if and only if there is no
   # more data to read.
   def read_byte : UInt8
-    if @size >= @position
-      value = @bytes[@position]
-      @position += 1
-    else
-      value = 0u8
-    end
+    value = @fp.read_byte
 
-    value
+    if value.nil?
+      0u8
+    else
+      value.not_nil!
+    end
   end
 
   # Returns the index of the _last_ appearance of *search*
@@ -45,11 +71,34 @@ struct MaxMindDB::Buffer
   # ```
   def rindex(search : Bytes) : Int32?
     (@size - search.size - 1).downto(0) do |i|
-      return i if @bytes[i, search.size] == search
+      return i if self[i, search.size] == search
     end
   end
 
-  macro method_missing(call)
-    @bytes.{{call.name}}({{*call.args}})
+  def [](idx : Int) : UInt8
+    raise IndexError.new if idx >= @size
+
+    old_pos = @fp.pos
+    @fp.seek(idx)
+    value = @fp.read_byte.not_nil!
+    @fp.seek(old_pos)
+
+    value
   end
+
+
+  def [](start : Int, count : Int) : Bytes
+    slice = Bytes.new(count)
+
+    old_pos = @fp.pos
+    @fp.seek(start)
+    @fp.read_fully(slice)
+    @fp.seek(old_pos)
+
+    slice
+  end
+
+  #macro method_missing(call)
+  #  @bytes.{{call.name}}({{*call.args}})
+  #end
 end

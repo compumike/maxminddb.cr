@@ -13,7 +13,12 @@ class MaxMindDB::Reader
 
   def initialize(db_path : String, cache_max_size : Int32? = nil)
     raise DatabaseError.new("Database not found") unless File.exists?(db_path)
-    initialize(read_file(db_path), cache_max_size)
+
+    @buffer = Buffer.new(db_path)
+    @metadata = Metadata.new(@buffer)
+
+    pointer_base = @metadata.search_tree_size + DATA_SEPARATOR_SIZE
+    @decoder = Decoder.new(@buffer, pointer_base, cache_max_size)
   end
 
   def initialize(db : Bytes | IO::Memory, cache_max_size : Int32? = nil)
